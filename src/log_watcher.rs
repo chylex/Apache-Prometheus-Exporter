@@ -6,16 +6,17 @@ use std::path::PathBuf;
 use linemux::MuxedLines;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::ApacheMetrics;
 use crate::log_file_pattern::LogFilePath;
 
-pub async fn read_logs_task(log_files: Vec<LogFilePath>, shutdown_send: UnboundedSender<()>) {
-	if let Err(error) = read_logs(log_files).await {
+pub async fn read_logs_task(log_files: Vec<LogFilePath>, metrics: ApacheMetrics, shutdown_send: UnboundedSender<()>) {
+	if let Err(error) = read_logs(log_files, metrics).await {
 		println!("[LogWatcher] Error reading logs: {}", error);
 		shutdown_send.send(()).unwrap();
 	}
 }
 
-async fn read_logs(log_files: Vec<LogFilePath>) -> io::Result<()> {
+async fn read_logs(log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> io::Result<()> {
 	let mut file_reader = MuxedLines::new()?;
 	let mut label_lookup: HashMap<PathBuf, &String> = HashMap::new();
 	
