@@ -3,8 +3,14 @@ name = "apache_prometheus_exporter"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "apache_prometheus_exporter"
+path = "src/main.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 prometheus-client = "0.18.0"
+tokio = { version = "1", features = ["rt", "macros", "signal"] }
+linemux = "0.2.4"
 path-slash = "0.2.1"
