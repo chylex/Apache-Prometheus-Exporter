@@ -36,8 +36,9 @@ async fn read_logs(log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> io::R
 		let event_result = file_reader.next_line().await?;
 		if let Some(event) = event_result {
 			match label_lookup.get(event.source()) {
-				Some(label) => {
+				Some(&label) => {
 					println!("[LogWatcher] Received line from \"{}\": {}", label, event.line());
+					metrics.requests_total.get_or_create(&("file", label.clone())).inc();
 				}
 				None => {
 					println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
