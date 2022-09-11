@@ -1,0 +1,52 @@
+version: "2.4"
+services:
+  
+  apache:
+    container_name: ape_dev_apache
+    image: "php:apache"
+    ports:
+      - "127.0.0.1:2001:2001"
+      - "127.0.0.1:2002:2002"
+      - "127.0.0.1:2003:2003"
+    volumes:
+      - ./config/apache/ports.conf:/etc/apache2/ports.conf:ro
+      - ./config/apache/modules.conf:/etc/apache2/mods-enabled/modules.conf:ro
+      - ./config/apache/sites.conf:/etc/apache2/sites-enabled/sites.conf:ro
+      - logs:/var/log/apache2
+    restart: "always"
+  
+  grafana:
+    container_name: ape_dev_grafana
+    image: grafana/grafana
+    ports:
+      - "127.0.0.1:2000:3000"
+    volumes:
+      - ./config/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    restart: "always"
+  
+  prometheus:
+    container_name: ape_dev_prometheus
+    image: prom/prometheus
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: "always"
+  
+  exporter:
+    container_name: ape_dev_exporter
+    build: "../"
+    expose:
+      - "9240"
+    volumes:
+      - logs:/logs
+    environment:
+      HTTP_HOST: "0.0.0.0"
+      LOG_FILE_PATTERN: "/logs/*.access.log"
+    restart: "always"
+
+volumes: 
+  logs:
+    name: exporter_dev_logs
