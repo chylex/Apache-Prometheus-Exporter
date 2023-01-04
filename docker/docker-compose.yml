@@ -44,7 +44,8 @@ services:
       - logs:/logs
     environment:
       HTTP_HOST: "0.0.0.0"
-      LOG_FILE_PATTERN: "/logs/*.access.log"
+      ACCESS_LOG_FILE_PATTERN: "/logs/*.access.log"
+      ERROR_LOG_FILE_PATTERN: "/logs/*.error.log"
     restart: "always"
 
 volumes: 

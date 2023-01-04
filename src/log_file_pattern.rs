@@ -6,24 +6,22 @@ use std::path::{Path, PathBuf};
 
 use path_slash::PathExt;
 
-/// Environment variable that determines the path and file name pattern of log files.
+/// Reads and parses an environment variable that determines the path and file name pattern of log files.
 ///
 /// Supports 3 pattern types:
 ///
 /// 1. A simple path to a file.
 /// 2. A path with a wildcard anywhere in the file name.
 /// 3. A path with a standalone wildcard component (i.e. no prefix or suffix in the folder name).
-pub const LOG_FILE_PATTERN: &'static str = "LOG_FILE_PATTERN";
-
-pub fn parse_log_file_pattern_from_env() -> Result<LogFilePattern, String> {
-	return match env::var(LOG_FILE_PATTERN) {
+pub fn parse_log_file_pattern_from_env(variable_name: &str) -> Result<LogFilePattern, String> {
+	return match env::var(variable_name) {
 		Ok(str) => {
-			let pattern_str = Path::new(&str).to_slash().ok_or(format!("Environment variable {} contains an invalid path.", LOG_FILE_PATTERN))?;
+			let pattern_str = Path::new(&str).to_slash().ok_or(format!("Environment variable {} contains an invalid path.", variable_name))?;
 			parse_log_file_pattern_from_str(&pattern_str)
 		}
 		Err(err) => match err {
-			VarError::NotPresent => Err(format!("Environment variable {} must be set.", LOG_FILE_PATTERN)),
-			VarError::NotUnicode(_) => Err(format!("Environment variable {} contains invalid characters.", LOG_FILE_PATTERN))
+			VarError::NotPresent => Err(format!("Environment variable {} must be set.", variable_name)),
+			VarError::NotUnicode(_) => Err(format!("Environment variable {} contains invalid characters.", variable_name))
 		}
 	};
 }

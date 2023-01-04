@@ -3,47 +3,98 @@ use std::io;
 use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 
-use linemux::MuxedLines;
+use linemux::{Line, MuxedLines};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ApacheMetrics;
 use crate::log_file_pattern::LogFilePath;
 
-pub async fn read_logs_task(log_files: Vec<LogFilePath>, metrics: ApacheMetrics, shutdown_send: UnboundedSender<()>) {
-	if let Err(error) = read_logs(log_files, metrics).await {
+#[derive(Copy, Clone, PartialEq)]
+enum LogFileKind {
+	Access,
+	Error,
+}
+
+struct LogFileInfo<'a> {
+	pub kind: LogFileKind,
+	pub label: &'a String,
+}
+
+pub async fn watch_logs_task(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics, shutdown_send: UnboundedSender<()>) {
+	if let Err(error) = watch_logs(access_log_files, error_log_files, metrics).await {
 		println!("[LogWatcher] Error reading logs: {}", error);
 		shutdown_send.send(()).unwrap();
 	}
 }
 
-async fn read_logs(log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> io::Result<()> {
-	let mut file_reader = MuxedLines::new()?;
-	let mut label_lookup: HashMap<PathBuf, &String> = HashMap::new();
-	
-	for log_file in &log_files {
-		let lookup_key = file_reader.add_file(&log_file.path).await?;
-		label_lookup.insert(lookup_key, &log_file.label);
+struct LogWatcher<'a> {
+	reader: MuxedLines,
+	files: HashMap<PathBuf, LogFileInfo<'a>>,
+}
+
+impl<'a> LogWatcher<'a> {
+	fn new() -> io::Result<LogWatcher<'a>> {
+		return Ok(LogWatcher {
+			reader: MuxedLines::new()?,
+			files: HashMap::new(),
+		});
 	}
 	
-	if log_files.is_empty() {
-		println!("[LogWatcher] No log files provided.");
-		return Err(Error::from(ErrorKind::Unsupported));
+	fn count_files_of_kind(&self, kind: LogFileKind) -> usize {
+		return self.files.values().filter(|info| info.kind == kind).count();
 	}
 	
-	println!("[LogWatcher] Watching {} log file(s).", log_files.len());
+	async fn add_file(&mut self, log_file: &'a LogFilePath, kind: LogFileKind) -> io::Result<()> {
+		let lookup_key = self.reader.add_file(&log_file.path).await?;
+		self.files.insert(lookup_key, LogFileInfo { kind, label: &log_file.label });
+		Ok(())
+	}
 	
-	loop {
-		let event_result = file_reader.next_line().await?;
-		if let Some(event) = event_result {
-			match label_lookup.get(event.source()) {
-				Some(&label) => {
-					println!("[LogWatcher] Received line from \"{}\": {}", label, event.line());
-					metrics.requests_total.get_or_create(&("file", label.clone())).inc();
-				}
-				None => {
-					println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
-				}
+	async fn start_watching(&mut self, metrics: &ApacheMetrics) -> io::Result<()> {
+		if self.files.is_empty() {
+			println!("[LogWatcher] No log files provided.");
+			return Err(Error::from(ErrorKind::Unsupported));
+		}
+		
+		println!("[LogWatcher] Watching {} access log file(s) and {} error log file(s).", self.count_files_of_kind(LogFileKind::Access), self.count_files_of_kind(LogFileKind::Error));
+		
+		loop {
+			if let Some(event) = self.reader.next_line().await? {
+				self.handle_line(event, metrics);
 			}
 		}
 	}
+	
+	fn handle_line(&mut self, event: Line, metrics: &ApacheMetrics) {
+		match self.files.get(event.source()) {
+			Some(metadata) => {
+				let label = metadata.label;
+				let (kind, family) = match metadata.kind {
+					LogFileKind::Access => ("access log", &metrics.requests_total),
+					LogFileKind::Error => ("error log", &metrics.errors_total),
+				};
+				
+				println!("[LogWatcher] Received {} line from \"{}\": {}", kind, label, event.line());
+				family.get_or_create(&("file", label.clone())).inc();
+			}
+			None => {
+				println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
+			}
+		}
+	}
+}
+
+async fn watch_logs(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> io::Result<()> {
+	let mut watcher = LogWatcher::new()?;
+	
+	for log_file in &access_log_files {
+		watcher.add_file(log_file, LogFileKind::Access).await?;
+	}
+	
+	for log_file in &error_log_files {
+		watcher.add_file(log_file, LogFileKind::Error).await?;
+	}
+	
+	watcher.start_watching(&metrics).await?;
+	Ok(())
 }
