@@ -20,6 +20,12 @@ struct LogFileInfo<'a> {
 	pub label: &'a String,
 }
 
+impl<'a> LogFileInfo<'a> {
+	fn get_label_set(&self) -> (&'static str, String) {
+		return ("file", self.label.clone());
+	}
+}
+
 pub async fn watch_logs_task(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics, shutdown_send: UnboundedSender<()>) {
 	if let Err(error) = watch_logs(access_log_files, error_log_files, metrics).await {
 		println!("[LogWatcher] Error reading logs: {}", error);
@@ -58,6 +64,12 @@ impl<'a> LogWatcher<'a> {
 		
 		println!("[LogWatcher] Watching {} access log file(s) and {} error log file(s).", self.count_files_of_kind(LogFileKind::Access), self.count_files_of_kind(LogFileKind::Error));
 		
+		for metadata in self.files.values() {
+			let label_set = metadata.get_label_set();
+			let _ = metrics.requests_total.get_or_create(&label_set);
+			let _ = metrics.errors_total.get_or_create(&label_set);
+		}
+		
 		loop {
 			if let Some(event) = self.reader.next_line().await? {
 				self.handle_line(event, metrics);
@@ -75,7 +87,7 @@ impl<'a> LogWatcher<'a> {
 				};
 				
 				println!("[LogWatcher] Received {} line from \"{}\": {}", kind, label, event.line());
-				family.get_or_create(&("file", label.clone())).inc();
+				family.get_or_create(&metadata.get_label_set()).inc();
 			}
 			None => {
 				println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
