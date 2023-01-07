@@ -23,7 +23,7 @@ pub fn create_web_server(host: &str, port: u16, metrics_registry: Mutex<Registry
 	let server = server.workers(1);
 	let server = server.bind((host, port));
 
-	println!("[WebServer] Starting web server on http://{}:{}", host, port);
+	println!("[WebServer] Starting web server on {0}:{1} with metrics endpoint: http://{0}:{1}/metrics", host, port);
 	return server.unwrap().run();
 }
 
