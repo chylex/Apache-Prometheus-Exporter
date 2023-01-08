@@ -92,6 +92,8 @@ Start the exporter. The standard output will show which log files have been foun
 
 Press `Ctrl-C` to stop the exporter.
 
+**Important:** Due to library bugs, the exporter will currently not watch rotated log files. If you want to use this project right now, you will need to add the `-c` flag to `rotatelogs`, and restart the exporter after every rotation.
+
 ## 5. Collect Prometheus Metrics
 
 Currently, the exporter exposes only these metrics:
