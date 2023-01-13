@@ -10,9 +10,10 @@ use crate::log_file_pattern::{LogFilePath, parse_log_file_pattern_from_env};
 use crate::log_watcher::watch_logs_task;
 use crate::web_server::{create_web_server, run_web_server};
 
-mod log_file_pattern;
-mod log_watcher;
 mod apache_metrics;
+mod log_file_pattern;
+mod log_parser;
+mod log_watcher;
 mod web_server;
 
 const ACCESS_LOG_FILE_PATTERN: &'static str = "ACCESS_LOG_FILE_PATTERN";
