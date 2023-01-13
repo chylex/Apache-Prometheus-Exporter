@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use linemux::{Line, MuxedLines};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ApacheMetrics;
+use crate::{ApacheMetrics, log_parser};
 use crate::log_file_pattern::LogFilePath;
 
 #[derive(Copy, Clone, PartialEq)]
@@ -77,22 +77,33 @@ impl<'a> LogWatcher<'a> {
 		}
 	}
 	
-	fn handle_line(&mut self, event: Line, metrics: &ApacheMetrics) {
-		match self.files.get(event.source()) {
-			Some(metadata) => {
-				let label = metadata.label;
-				let (kind, family) = match metadata.kind {
-					LogFileKind::Access => ("access log", &metrics.requests_total),
-					LogFileKind::Error => ("error log", &metrics.errors_total),
-				};
-				
-				println!("[LogWatcher] Received {} line from \"{}\": {}", kind, label, event.line());
-				family.get_or_create(&metadata.get_label_set()).inc();
+	fn handle_line(&self, event: Line, metrics: &ApacheMetrics) {
+		if let Some(file) = self.files.get(event.source()) {
+			match file.kind {
+				LogFileKind::Access => self.handle_access_log_line(event.line(), file, metrics),
+				LogFileKind::Error => self.handle_error_log_line(event.line(), file, metrics),
 			}
-			None => {
-				println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
+		} else {
+			println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
+		}
+	}
+	
+	fn handle_access_log_line(&self, line: &str, file: &LogFileInfo, metrics: &ApacheMetrics) {
+		match log_parser::AccessLogLineParts::parse(line) {
+			Ok(parts) => {
+				println!("[LogWatcher] Received access log line from \"{}\": {}", file.label, parts)
+			}
+			Err(err) => {
+				println!("[LogWatcher] Received access log line from \"{}\" with invalid format ({:?}): {}", file.label, err, line)
 			}
 		}
+		
+		metrics.requests_total.get_or_create(&file.get_label_set()).inc();
+	}
+	
+	fn handle_error_log_line(&self, line: &str, file: &LogFileInfo, metrics: &ApacheMetrics) {
+		println!("[LogWatcher] Received error log line from \"{}\": {}", file.label, line);
+		metrics.errors_total.get_or_create(&file.get_label_set()).inc();
 	}
 }
 
