@@ -46,6 +46,7 @@ services:
       HTTP_HOST: "0.0.0.0"
       ACCESS_LOG_FILE_PATTERN: "/logs/*.access.log"
       ERROR_LOG_FILE_PATTERN: "/logs/*.error.log"
+    stop_signal: SIGINT
     restart: "always"
 
 volumes: 
