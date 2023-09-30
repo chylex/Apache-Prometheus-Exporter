@@ -7,7 +7,10 @@ edition = "2021"
 name = "apache_prometheus_exporter"
 path = "src/main.rs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
 
 [dependencies]
 actix-web = "4.4.0"
