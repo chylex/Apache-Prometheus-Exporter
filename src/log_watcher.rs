@@ -21,8 +21,8 @@ struct LogFileInfo<'a> {
 }
 
 impl<'a> LogFileInfo<'a> {
-	fn get_label_set(&self) -> (&'static str, String) {
-		return ("file", self.label.clone());
+	fn get_label_set(&self) -> [(&'static str, String); 1] {
+		[("file", self.label.clone())]
 	}
 }
 
@@ -40,10 +40,10 @@ struct LogWatcher<'a> {
 
 impl<'a> LogWatcher<'a> {
 	fn new() -> io::Result<LogWatcher<'a>> {
-		return Ok(LogWatcher {
+		Ok(LogWatcher {
 			reader: MuxedLines::new()?,
 			files: HashMap::new(),
-		});
+		})
 	}
 	
 	fn count_files_of_kind(&self, kind: LogFileKind) -> usize {

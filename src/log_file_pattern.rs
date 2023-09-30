@@ -14,7 +14,7 @@ use path_slash::PathExt;
 /// 2. A path with a wildcard anywhere in the file name.
 /// 3. A path with a standalone wildcard component (i.e. no prefix or suffix in the folder name).
 pub fn parse_log_file_pattern_from_env(variable_name: &str) -> Result<LogFilePattern, String> {
-	return match env::var(variable_name) {
+	match env::var(variable_name) {
 		Ok(str) => {
 			let pattern_str = Path::new(&str).to_slash().ok_or(format!("Environment variable {} contains an invalid path.", variable_name))?;
 			parse_log_file_pattern_from_str(&pattern_str)
@@ -23,7 +23,7 @@ pub fn parse_log_file_pattern_from_env(variable_name: &str) -> Result<LogFilePat
 			VarError::NotPresent => Err(format!("Environment variable {} must be set.", variable_name)),
 			VarError::NotUnicode(_) => Err(format!("Environment variable {} contains invalid characters.", variable_name))
 		}
-	};
+	}
 }
 
 fn parse_log_file_pattern_from_str(pattern_str: &str) -> Result<LogFilePattern, String> {
@@ -31,11 +31,11 @@ fn parse_log_file_pattern_from_str(pattern_str: &str) -> Result<LogFilePattern, 
 		return Err(String::from("Path is empty."));
 	}
 	
-	return if let Some((left, right)) = pattern_str.split_once('*') {
+	if let Some((left, right)) = pattern_str.split_once('*') {
 		parse_log_file_pattern_split_on_wildcard(left, right)
 	} else {
 		Ok(LogFilePattern::WithoutWildcard(pattern_str.to_string()))
-	};
+	}
 }
 
 fn parse_log_file_pattern_split_on_wildcard(left: &str, right: &str) -> Result<LogFilePattern, String> {
@@ -54,7 +54,7 @@ fn parse_log_file_pattern_split_on_wildcard(left: &str, right: &str) -> Result<L
 		return Err(String::from("Path has a folder wildcard with a prefix or suffix."));
 	}
 	
-	return if let Some((folder_path, file_name_prefix)) = left.rsplit_once('/') {
+	if let Some((folder_path, file_name_prefix)) = left.rsplit_once('/') {
 		Ok(LogFilePattern::WithFileNameWildcard(PatternWithFileNameWildcard {
 			path: folder_path.to_string(),
 			file_name_prefix: file_name_prefix.to_string(),
@@ -66,7 +66,7 @@ fn parse_log_file_pattern_split_on_wildcard(left: &str, right: &str) -> Result<L
 			file_name_prefix: left.to_string(),
 			file_name_suffix: right.to_string(),
 		}))
-	};
+	}
 }
 
 #[derive(Debug)]
@@ -82,11 +82,10 @@ impl PatternWithFileNameWildcard {
 	}
 	
 	fn match_wildcard_on_dir_entry(&self, dir_entry: &DirEntry) -> Option<String> {
-		return if let Some(wildcard_match) = dir_entry.file_name().to_str().and_then(|file_name| self.match_wildcard(file_name)) {
-			Some(wildcard_match.to_string())
-		} else {
-			None
-		};
+		dir_entry.file_name()
+			.to_str()
+			.and_then(|file_name| self.match_wildcard(file_name))
+			.map(|wildcard_match| wildcard_match.to_string())
 	}
 }
 
@@ -115,22 +114,22 @@ pub enum LogFilePattern {
 
 impl LogFilePattern {
 	pub fn search(&self) -> Result<Vec<LogFilePath>, io::Error> { // TODO error message
-		return match self {
+		match self {
 			Self::WithoutWildcard(path) => Self::search_without_wildcard(path),
 			Self::WithFileNameWildcard(pattern) => Self::search_with_file_name_wildcard(pattern),
 			Self::WithFolderNameWildcard(pattern) => Self::search_with_folder_name_wildcard(pattern)
-		};
+		}
 	}
 	
 	fn search_without_wildcard(path_str: &String) -> Result<Vec<LogFilePath>, io::Error> {
 		let path = Path::new(path_str);
 		let is_valid = path.is_file() || matches!(path.parent(), Some(parent) if parent.is_dir());
 		
-		return if is_valid {
+		if is_valid {
 			Ok(vec![LogFilePath::with_empty_label(path_str)])
 		} else {
 			Err(io::Error::from(ErrorKind::NotFound))
-		};
+		}
 	}
 	
 	fn search_with_file_name_wildcard(pattern: &PatternWithFileNameWildcard) -> Result<Vec<LogFilePath>, io::Error> {
@@ -143,7 +142,7 @@ impl LogFilePattern {
 			}
 		}
 		
-		return Ok(result);
+		Ok(result)
 	}
 	
 	fn search_with_folder_name_wildcard(pattern: &PatternWithFolderNameWildcard) -> Result<Vec<LogFilePath>, io::Error> {
@@ -159,7 +158,7 @@ impl LogFilePattern {
 			}
 		}
 		
-		return Ok(result);
+		Ok(result)
 	}
 }
 
@@ -170,10 +169,10 @@ pub struct LogFilePath {
 
 impl LogFilePath {
 	fn with_empty_label(s: &String) -> LogFilePath {
-		return LogFilePath {
+		LogFilePath {
 			path: PathBuf::from(s),
 			label: String::default(),
-		};
+		}
 	}
 }
 
@@ -209,12 +208,12 @@ mod tests {
 	
 	#[test]
 	fn valid_with_file_name_wildcard_prefix() {
-		assert!(matches!(parse_log_file_pattern_from_str("/path/to/files/access_*"), Ok(LogFilePattern::WithFileNameWildcard(pattern)) if pattern.path == "/path/to/files" && pattern.file_name_prefix == "access_" && pattern.file_name_suffix == ""));
+		assert!(matches!(parse_log_file_pattern_from_str("/path/to/files/access_*"), Ok(LogFilePattern::WithFileNameWildcard(pattern)) if pattern.path == "/path/to/files" && pattern.file_name_prefix == "access_" && pattern.file_name_suffix.is_empty()));
 	}
 	
 	#[test]
 	fn valid_with_file_name_wildcard_suffix() {
-		assert!(matches!(parse_log_file_pattern_from_str("/path/to/files/*_access.log"), Ok(LogFilePattern::WithFileNameWildcard(pattern)) if pattern.path == "/path/to/files" && pattern.file_name_prefix == "" && pattern.file_name_suffix == "_access.log"));
+		assert!(matches!(parse_log_file_pattern_from_str("/path/to/files/*_access.log"), Ok(LogFilePattern::WithFileNameWildcard(pattern)) if pattern.path == "/path/to/files" && pattern.file_name_prefix.is_empty() && pattern.file_name_suffix == "_access.log"));
 	}
 	
 	#[test]

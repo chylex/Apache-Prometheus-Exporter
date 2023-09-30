@@ -1,4 +1,4 @@
-use std::str;
+use std::{fmt, str};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ pub fn create_web_server(host: &str, port: u16, metrics_registry: Mutex<Registry
 	let server = server.bind((host, port));
 
 	println!("[WebServer] Starting web server on {0}:{1} with metrics endpoint: http://{0}:{1}/metrics", host, port);
-	return server.unwrap().run();
+	server.unwrap().run()
 }
 
 pub async fn run_web_server(server: Server) {
@@ -33,22 +33,37 @@ pub async fn run_web_server(server: Server) {
 	}
 }
 
+//noinspection SpellCheckingInspection
 async fn metrics_handler(metrics_registry: web::Data<Mutex<Registry>>) -> Result<HttpResponse> {
-	let mut buf = Vec::new();
-	
-	{
-		if let Ok(metrics_registry) = metrics_registry.lock() {
-			encode(&mut buf, &metrics_registry)?;
-		} else {
-			println!("[WebServer] Failed acquiring lock on registry.");
-			return Ok(HttpResponse::InternalServerError().body(""));
+	let response = match encode_metrics(metrics_registry) {
+		MetricsEncodeResult::Ok(buf) => {
+			HttpResponse::Ok().content_type("application/openmetrics-text; version=1.0.0; charset=utf-8").body(buf)
 		}
-	}
+		MetricsEncodeResult::FailedAcquiringRegistryLock => {
+			println!("[WebServer] Failed acquiring lock on registry.");
+			HttpResponse::InternalServerError().body("")
+		}
+		MetricsEncodeResult::FailedEncodingMetrics(e) => {
+			println!("[WebServer] Error encoding metrics: {}", e);
+			HttpResponse::InternalServerError().body("")
+		}
+	};
 	
-	if let Ok(buf) = String::from_utf8(buf) {
-		Ok(HttpResponse::Ok().content_type("application/openmetrics-text; version=1.0.0; charset=utf-8").body(buf))
+	Ok(response)
+}
+
+enum MetricsEncodeResult {
+	Ok(String),
+	FailedAcquiringRegistryLock,
+	FailedEncodingMetrics(fmt::Error),
+}
+
+fn encode_metrics(metrics_registry: web::Data<Mutex<Registry>>) -> MetricsEncodeResult {
+	let mut buf = String::new();
+	
+	return if let Ok(metrics_registry) = metrics_registry.lock() {
+		encode(&mut buf, &metrics_registry).map_or_else(MetricsEncodeResult::FailedEncodingMetrics, |_| MetricsEncodeResult::Ok(buf))
 	} else {
-		println!("[WebServer] Failed converting buffer to UTF-8.");
-		Ok(HttpResponse::InternalServerError().body(""))
+		MetricsEncodeResult::FailedAcquiringRegistryLock
 	}
 }

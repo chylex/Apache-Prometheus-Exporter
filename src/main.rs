@@ -16,8 +16,8 @@ mod log_parser;
 mod log_watcher;
 mod web_server;
 
-const ACCESS_LOG_FILE_PATTERN: &'static str = "ACCESS_LOG_FILE_PATTERN";
-const ERROR_LOG_FILE_PATTERN: &'static str = "ERROR_LOG_FILE_PATTERN";
+const ACCESS_LOG_FILE_PATTERN: &str = "ACCESS_LOG_FILE_PATTERN";
+const ERROR_LOG_FILE_PATTERN: &str = "ERROR_LOG_FILE_PATTERN";
 
 fn find_log_files(environment_variable_name: &str, log_kind: &str) -> Option<Vec<LogFilePath>> {
 	let log_file_pattern = match parse_log_file_pattern_from_env(environment_variable_name) {
@@ -45,7 +45,7 @@ fn find_log_files(environment_variable_name: &str, log_kind: &str) -> Option<Vec
 		println!("Found {} file: {} (label \"{}\")", log_kind, log_file.path.display(), log_file.label);
 	}
 	
-	return Some(log_files);
+	Some(log_files)
 }
 
 #[tokio::main(flavor = "current_thread")]

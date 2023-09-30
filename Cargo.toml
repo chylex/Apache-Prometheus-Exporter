@@ -10,8 +10,8 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "4.1.0"
-linemux = "0.2.4"
+actix-web = "4.4.0"
+linemux = "0.3.0"
 path-slash = "0.2.1"
-prometheus-client = "0.18.0"
-tokio = { version = "1", features = ["rt", "macros", "signal"] }
+prometheus-client = "0.21.2"
+tokio = { version = "1.32.0", features = ["rt", "macros", "signal"] }
