@@ -13,7 +13,7 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-actix-web = "4.4.0"
+hyper = { version = "0.14.27", default-features = false, features = ["http1", "server", "runtime"] }
 linemux = "0.3.0"
 path-slash = "0.2.1"
 prometheus-client = "0.21.2"

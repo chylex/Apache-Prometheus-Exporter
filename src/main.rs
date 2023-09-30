@@ -1,5 +1,7 @@
 use std::env;
+use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use tokio::signal;
@@ -8,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::apache_metrics::ApacheMetrics;
 use crate::log_file_pattern::{LogFilePath, parse_log_file_pattern_from_env};
 use crate::log_watcher::watch_logs_task;
-use crate::web_server::{create_web_server, run_web_server};
+use crate::web_server::WebServer;
 
 mod apache_metrics;
 mod log_file_pattern;
@@ -51,6 +53,13 @@ fn find_log_files(environment_variable_name: &str, log_kind: &str) -> Option<Vec
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
 	let host = env::var("HTTP_HOST").unwrap_or(String::from("127.0.0.1"));
+	let bind_ip = match IpAddr::from_str(&host) {
+		Ok(addr) => addr,
+		Err(_) => {
+			println!("Invalid HTTP host: {}", host);
+			return ExitCode::FAILURE;
+		}
+	};
 	
 	println!("Initializing exporter...");
 	
@@ -64,11 +73,16 @@ async fn main() -> ExitCode {
 		None => return ExitCode::FAILURE,
 	};
 	
+	let server = match WebServer::try_bind(SocketAddr::new(bind_ip, 9240)) {
+		Some(server) => server,
+		None => return ExitCode::FAILURE
+	};
+	
 	let (metrics_registry, metrics) = ApacheMetrics::new();
 	let (shutdown_send, mut shutdown_recv) = mpsc::unbounded_channel();
 	
 	tokio::spawn(watch_logs_task(access_log_files, error_log_files, metrics.clone(), shutdown_send.clone()));
-	tokio::spawn(run_web_server(create_web_server(host.as_str(), 9240, Mutex::new(metrics_registry))));
+	tokio::spawn(server.serve(Mutex::new(metrics_registry)));
 	
 	drop(shutdown_send);
 	
