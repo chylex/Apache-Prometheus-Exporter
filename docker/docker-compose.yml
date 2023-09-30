@@ -38,8 +38,8 @@ services:
   exporter:
     container_name: ape_dev_exporter
     build: "../"
-    expose:
-      - "9240"
+    ports:
+      - "127.0.0.1:2004:9240"
     volumes:
       - logs:/logs
     environment:

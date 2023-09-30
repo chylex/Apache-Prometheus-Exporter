@@ -12,9 +12,9 @@ This configuration will create a Docker volume for the logs, and the following c
    - **User** : `admin`
    - **Password** : `admin`
 3. **Prometheus** configured with the exporter's endpoint.
-4. **Exporter** built using the source code from this repository.
+4. **Exporter** built using the source code from this repository, with its metrics endpoint exposed as: http://localhost:2004/metrics
 
-This example is not suitable for production. You can use it as inspiration, but you will have to modify it in order to persist container data and follow the latest security practices:
+This example is unsuitable for production. You can use it as inspiration, but you will have to modify it in order to persist container data and follow the latest security practices:
 
 - Create Docker volumes for persistent storage of container data and configuration files
 - Create a dedicated user for each container instead of running as `root`
