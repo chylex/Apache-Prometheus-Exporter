@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-use std::io;
-use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
+use std::process::Stdio;
 
-use linemux::{Line, MuxedLines};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 use crate::ApacheMetrics;
 use crate::log_file_pattern::LogFilePath;
@@ -15,98 +13,126 @@ enum LogFileKind {
 	Error,
 }
 
-struct LogFileInfo<'a> {
-	pub kind: LogFileKind,
-	pub label: &'a String,
+struct LogFile {
+	pub path: PathBuf,
+	pub metadata: LogFileMetadata,
 }
 
-impl<'a> LogFileInfo<'a> {
+struct LogFileMetadata {
+	pub kind: LogFileKind,
+	pub label: String,
+}
+
+impl LogFileMetadata {
 	fn get_label_set(&self) -> [(&'static str, String); 1] {
 		[("file", self.label.clone())]
 	}
 }
 
-pub async fn watch_logs_task(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics, shutdown_send: UnboundedSender<()>) {
-	if let Err(error) = watch_logs(access_log_files, error_log_files, metrics).await {
-		println!("[LogWatcher] Error reading logs: {}", error);
-		shutdown_send.send(()).unwrap();
+pub async fn start_log_watcher(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> bool {
+	let mut watcher = LogWatcher::new();
+	
+	for log_file in access_log_files.into_iter() {
+		watcher.add_file(log_file, LogFileKind::Access);
 	}
+	
+	for log_file in error_log_files.into_iter() {
+		watcher.add_file(log_file, LogFileKind::Error);
+	}
+	
+	watcher.start(&metrics).await
 }
 
-struct LogWatcher<'a> {
-	reader: MuxedLines,
-	files: HashMap<PathBuf, LogFileInfo<'a>>,
+struct LogWatcher {
+	files: Vec<LogFile>,
 }
 
-impl<'a> LogWatcher<'a> {
-	fn new() -> io::Result<LogWatcher<'a>> {
-		Ok(LogWatcher {
-			reader: MuxedLines::new()?,
-			files: HashMap::new(),
-		})
+impl LogWatcher {
+	fn new() -> LogWatcher {
+		LogWatcher { files: Vec::new() }
 	}
 	
 	fn count_files_of_kind(&self, kind: LogFileKind) -> usize {
-		return self.files.values().filter(|info| info.kind == kind).count();
+		return self.files.iter().filter(|info| info.metadata.kind == kind).count();
 	}
 	
-	async fn add_file(&mut self, log_file: &'a LogFilePath, kind: LogFileKind) -> io::Result<()> {
-		let lookup_key = self.reader.add_file(&log_file.path).await?;
-		self.files.insert(lookup_key, LogFileInfo { kind, label: &log_file.label });
-		Ok(())
+	fn add_file(&mut self, log_file: LogFilePath, kind: LogFileKind) {
+		let path = log_file.path;
+		let label = log_file.label;
+		let metadata = LogFileMetadata { kind, label };
+		self.files.push(LogFile { path, metadata });
 	}
 	
-	async fn start_watching(&mut self, metrics: &ApacheMetrics) -> io::Result<()> {
+	async fn start(self, metrics: &ApacheMetrics) -> bool {
 		if self.files.is_empty() {
 			println!("[LogWatcher] No log files provided.");
-			return Err(Error::from(ErrorKind::Unsupported));
+			return false;
 		}
 		
 		println!("[LogWatcher] Watching {} access log file(s) and {} error log file(s).", self.count_files_of_kind(LogFileKind::Access), self.count_files_of_kind(LogFileKind::Error));
 		
-		for metadata in self.files.values() {
+		for file in self.files.into_iter() {
+			let metadata = file.metadata;
 			let label_set = metadata.get_label_set();
 			let _ = metrics.requests_total.get_or_create(&label_set);
 			let _ = metrics.errors_total.get_or_create(&label_set);
+			
+			let command = Command::new("tail")
+				.arg("-q") // Don't print file names.
+				.arg("-F") // Follow rotations.
+				.arg("-n").arg("0") // Start from end.
+				.arg(&file.path)
+				.env_clear()
+				.stdin(Stdio::null())
+				.stdout(Stdio::piped())
+				.stderr(Stdio::null())
+				.spawn();
+			
+			let mut process = match command {
+				Ok(process) => process,
+				Err(error) => {
+					println!("[LogWatcher] Error spawning tail process for file \"{}\": {}", file.path.to_string_lossy(), error);
+					return false;
+				}
+			};
+			
+			let stdout = match process.stdout.take() {
+				Some(stdout) => stdout,
+				None => {
+					println!("[LogWatcher] No output handle in tail process for file: {}", file.path.to_string_lossy());
+					return false;
+				}
+			};
+			
+			let mut output_reader = BufReader::new(stdout).lines();
+			let metrics = metrics.clone();
+			
+			tokio::spawn(async move {
+				loop {
+					match output_reader.next_line().await {
+						Ok(maybe_line) => match maybe_line {
+							Some(line) => handle_line(&metadata, line, &metrics),
+							None => break,
+						},
+						Err(e) => {
+							println!("[LogWatcher] Error reading from file \"{}\": {}", metadata.label, e);
+							break;
+						}
+					}
+				}
+			});
 		}
 		
-		loop {
-			if let Some(event) = self.reader.next_line().await? {
-				self.handle_line(event, metrics);
-			}
-		}
-	}
-	
-	fn handle_line(&mut self, event: Line, metrics: &ApacheMetrics) {
-		match self.files.get(event.source()) {
-			Some(metadata) => {
-				let label = metadata.label;
-				let (kind, family) = match metadata.kind {
-					LogFileKind::Access => ("access log", &metrics.requests_total),
-					LogFileKind::Error => ("error log", &metrics.errors_total),
-				};
-				
-				println!("[LogWatcher] Received {} line from \"{}\": {}", kind, label, event.line());
-				family.get_or_create(&metadata.get_label_set()).inc();
-			}
-			None => {
-				println!("[LogWatcher] Received line from unknown file: {}", event.source().display());
-			}
-		}
+		true
 	}
 }
 
-async fn watch_logs(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> io::Result<()> {
-	let mut watcher = LogWatcher::new()?;
+fn handle_line(metadata: &LogFileMetadata, line: String, metrics: &ApacheMetrics) {
+	let (kind, family) = match metadata.kind {
+		LogFileKind::Access => ("access log", &metrics.requests_total),
+		LogFileKind::Error => ("error log", &metrics.errors_total),
+	};
 	
-	for log_file in &access_log_files {
-		watcher.add_file(log_file, LogFileKind::Access).await?;
-	}
-	
-	for log_file in &error_log_files {
-		watcher.add_file(log_file, LogFileKind::Error).await?;
-	}
-	
-	watcher.start_watching(&metrics).await?;
-	Ok(())
+	println!("[LogWatcher] Received {} line from \"{}\": {}", kind, metadata.label, line);
+	family.get_or_create(&metadata.get_label_set()).inc();
 }

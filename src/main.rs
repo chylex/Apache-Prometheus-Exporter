@@ -5,11 +5,10 @@ use std::str::FromStr;
 use std::sync::Mutex;
 
 use tokio::signal;
-use tokio::sync::mpsc;
 
 use crate::apache_metrics::ApacheMetrics;
 use crate::log_file_pattern::{LogFilePath, parse_log_file_pattern_from_env};
-use crate::log_watcher::watch_logs_task;
+use crate::log_watcher::start_log_watcher;
 use crate::web_server::WebServer;
 
 mod apache_metrics;
@@ -79,22 +78,21 @@ async fn main() -> ExitCode {
 	};
 	
 	let (metrics_registry, metrics) = ApacheMetrics::new();
-	let (shutdown_send, mut shutdown_recv) = mpsc::unbounded_channel();
 	
-	tokio::spawn(watch_logs_task(access_log_files, error_log_files, metrics.clone(), shutdown_send.clone()));
-	tokio::spawn(server.serve(Mutex::new(metrics_registry)));
-	
-	drop(shutdown_send);
-	
-	tokio::select! {
-		_ = signal::ctrl_c() => {
-			println!("Received CTRL-C, shutting down...")
-		}
-		
-		_ = shutdown_recv.recv() => {
-			println!("Shutting down...");
-		}
+	if !start_log_watcher(access_log_files, error_log_files, metrics).await {
+		return ExitCode::FAILURE;
 	}
 	
-	ExitCode::SUCCESS
+	tokio::spawn(server.serve(Mutex::new(metrics_registry)));
+	
+	match signal::ctrl_c().await {
+		Ok(_) => {
+			println!("Received CTRL-C, shutting down...");
+			ExitCode::SUCCESS
+		}
+		Err(e) => {
+			println!("Error registering CTRL-C handler: {}", e);
+			ExitCode::FAILURE
+		}
+	}
 }
