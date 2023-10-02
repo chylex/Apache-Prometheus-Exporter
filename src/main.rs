@@ -12,6 +12,7 @@ use crate::log_watcher::start_log_watcher;
 use crate::web_server::WebServer;
 
 mod apache_metrics;
+mod fs_watcher;
 mod log_file_pattern;
 mod log_parser;
 mod log_watcher;

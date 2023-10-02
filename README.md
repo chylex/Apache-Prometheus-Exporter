@@ -82,17 +82,21 @@ The wildcard must not include any prefix or suffix, so `/*/` is accepted, but `/
 
 #### Notes
 
-> At least one access log file and one error log file must be found when the exporter starts, otherwise the exporter immediately exits with an error.
-
-> If a log file is deleted, the exporter will automatically resume watching it if it is re-created later. If you want the exporter to forget about deleted log files, restart the exporter.
+> The exporter only searches for files when it starts. If you need the exporter to watch a new file or forget a deleted file, you must restart it.
 
 ## 4. Launch the Exporter
 
 Start the exporter. The standard output will show which log files have been found, the web server host, and the metrics endpoint URL.
 
-Press `Ctrl-C` to stop the exporter.
+If no errors are shown, the exporter will begin reading the found log files from the end, and printing each line to the standard output. When a log file is rotated, the exporter will begin reading it from the beginning.
 
-**Important:** Due to library bugs, the exporter will currently not watch rotated log files. If you want to use this project right now, you will need to add the `-c` flag to `rotatelogs`, and restart the exporter after every rotation.
+Press `Ctrl-C` to stop the exporter. Signals other than `SIGINT` are ignored.
+
+#### Notes
+
+> The exporter is designed to work and tested with the `rotatelogs` tool in a Linux container. Any other tools or operating systems are unsupported.
+
+> If an error occurs while reading a file or re-opening a rotated file, the exporter will stop watching it and print the error to standard output.
 
 ## 5. Collect Prometheus Metrics
 
