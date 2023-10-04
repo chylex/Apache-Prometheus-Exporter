@@ -178,7 +178,7 @@ impl LogFilePath {
 
 #[cfg(test)]
 mod tests {
-	use crate::log_file_pattern::{LogFilePattern, parse_log_file_pattern_from_str};
+	use super::{LogFilePattern, parse_log_file_pattern_from_str};
 	
 	#[test]
 	fn empty_path() {

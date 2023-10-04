@@ -9,12 +9,12 @@ use tokio::io::{AsyncBufReadExt, BufReader, Lines};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 
-use crate::ApacheMetrics;
-use crate::fs_watcher::{FsEventCallbacks, FsWatcher};
-use crate::log_file_pattern::LogFilePath;
+use crate::logs::filesystem_watcher::{FsEventCallbacks, FsWatcher};
+use crate::logs::log_file_pattern::LogFilePath;
+use crate::metrics::Metrics;
 
 #[derive(Copy, Clone, PartialEq)]
-enum LogFileKind {
+pub enum LogFileKind {
 	Access,
 	Error,
 }
@@ -30,26 +30,12 @@ impl LogFileMetadata {
 	}
 }
 
-pub async fn start_log_watcher(access_log_files: Vec<LogFilePath>, error_log_files: Vec<LogFilePath>, metrics: ApacheMetrics) -> bool {
-	let mut watcher = LogWatcherConfiguration::new();
-	
-	for log_file in access_log_files.into_iter() {
-		watcher.add_file(log_file, LogFileKind::Access);
-	}
-	
-	for log_file in error_log_files.into_iter() {
-		watcher.add_file(log_file, LogFileKind::Error);
-	}
-	
-	watcher.start(&metrics).await
-}
-
-struct LogWatcherConfiguration {
+pub struct LogWatcherConfiguration {
 	files: Vec<(PathBuf, LogFileMetadata)>,
 }
 
 impl LogWatcherConfiguration {
-	fn new() -> LogWatcherConfiguration {
+	pub fn new() -> LogWatcherConfiguration {
 		LogWatcherConfiguration { files: Vec::new() }
 	}
 	
@@ -57,14 +43,14 @@ impl LogWatcherConfiguration {
 		return self.files.iter().filter(|(_, metadata)| metadata.kind == kind).count();
 	}
 	
-	fn add_file(&mut self, log_file: LogFilePath, kind: LogFileKind) {
+	pub fn add_file(&mut self, log_file: LogFilePath, kind: LogFileKind) {
 		let path = log_file.path;
 		let label = log_file.label;
 		let metadata = LogFileMetadata { kind, label };
 		self.files.push((path, metadata));
 	}
 	
-	async fn start(self, metrics: &ApacheMetrics) -> bool {
+	pub async fn start(self, metrics: &Metrics) -> bool {
 		if self.files.is_empty() {
 			println!("[LogWatcher] No log files provided.");
 			return false;
@@ -141,7 +127,7 @@ struct LogWatcher {
 }
 
 impl LogWatcher {
-	async fn create(path: PathBuf, metadata: LogFileMetadata, metrics: ApacheMetrics, fs_watcher: Arc<FsWatcher>, fs_event_receiver: Receiver<Event>) -> Option<Self> {
+	async fn create(path: PathBuf, metadata: LogFileMetadata, metrics: Metrics, fs_watcher: Arc<FsWatcher>, fs_event_receiver: Receiver<Event>) -> Option<Self> {
 		let state = match LogWatchingState::initialize(path.clone(), fs_watcher).await {
 			Some(state) => state,
 			None => return None,
@@ -261,7 +247,7 @@ impl LogWatchingState {
 struct LogLineProcessor {
 	path: PathBuf,
 	metadata: LogFileMetadata,
-	metrics: ApacheMetrics,
+	metrics: Metrics,
 }
 
 impl LogLineProcessor {

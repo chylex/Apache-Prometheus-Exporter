@@ -6,49 +6,15 @@ use std::sync::Mutex;
 
 use tokio::signal;
 
-use crate::apache_metrics::ApacheMetrics;
-use crate::log_file_pattern::{LogFilePath, parse_log_file_pattern_from_env};
-use crate::log_watcher::start_log_watcher;
-use crate::web_server::WebServer;
+use crate::metrics::Metrics;
+use crate::web::WebServer;
 
-mod apache_metrics;
-mod fs_watcher;
-mod log_file_pattern;
-mod log_parser;
-mod log_watcher;
-mod web_server;
+mod logs;
+mod metrics;
+mod web;
 
 const ACCESS_LOG_FILE_PATTERN: &str = "ACCESS_LOG_FILE_PATTERN";
 const ERROR_LOG_FILE_PATTERN: &str = "ERROR_LOG_FILE_PATTERN";
-
-fn find_log_files(environment_variable_name: &str, log_kind: &str) -> Option<Vec<LogFilePath>> {
-	let log_file_pattern = match parse_log_file_pattern_from_env(environment_variable_name) {
-		Ok(pattern) => pattern,
-		Err(error) => {
-			println!("Error: {}", error);
-			return None;
-		}
-	};
-	
-	let log_files = match log_file_pattern.search() {
-		Ok(files) => files,
-		Err(error) => {
-			println!("Error searching {} files: {}", log_kind, error);
-			return None;
-		}
-	};
-	
-	if log_files.is_empty() {
-		println!("Found no matching {} files.", log_kind);
-		return None;
-	}
-	
-	for log_file in &log_files {
-		println!("Found {} file: {} (label \"{}\")", log_kind, log_file.path.display(), log_file.label);
-	}
-	
-	Some(log_files)
-}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -63,12 +29,12 @@ async fn main() -> ExitCode {
 	
 	println!("Initializing exporter...");
 	
-	let access_log_files = match find_log_files(ACCESS_LOG_FILE_PATTERN, "access log") {
+	let access_log_files = match logs::find_log_files(ACCESS_LOG_FILE_PATTERN, "access log") {
 		Some(files) => files,
 		None => return ExitCode::FAILURE,
 	};
 	
-	let error_log_files = match find_log_files(ERROR_LOG_FILE_PATTERN, "error log") {
+	let error_log_files = match logs::find_log_files(ERROR_LOG_FILE_PATTERN, "error log") {
 		Some(files) => files,
 		None => return ExitCode::FAILURE,
 	};
@@ -78,9 +44,9 @@ async fn main() -> ExitCode {
 		None => return ExitCode::FAILURE
 	};
 	
-	let (metrics_registry, metrics) = ApacheMetrics::new();
+	let (metrics_registry, metrics) = Metrics::new();
 	
-	if !start_log_watcher(access_log_files, error_log_files, metrics).await {
+	if !logs::start_log_watcher(access_log_files, error_log_files, metrics).await {
 		return ExitCode::FAILURE;
 	}
 	
