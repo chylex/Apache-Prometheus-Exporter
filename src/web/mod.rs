@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use anyhow::Context;
 use hyper::{Body, Error, Method, Request, Response, Server, StatusCode};
 use hyper::http::Result;
 use hyper::server::Builder;
@@ -19,23 +20,17 @@ pub struct WebServer {
 
 impl WebServer {
 	//noinspection HttpUrlsUsage
-	pub fn try_bind(addr: SocketAddr) -> Option<WebServer> {
+	pub fn try_bind(addr: SocketAddr) -> anyhow::Result<WebServer> {
 		println!("[WebServer] Starting web server on {0} with metrics endpoint: http://{0}/metrics", addr);
-		let builder = match Server::try_bind(&addr) {
-			Ok(builder) => builder,
-			Err(e) => {
-				println!("[WebServer] Could not bind to {}: {}", addr, e);
-				return None;
-			}
-		};
 		
+		let builder = Server::try_bind(&addr).with_context(|| format!("Could not bind to {}", addr))?;
 		let builder = builder.tcp_keepalive(Some(Duration::from_secs(60)));
 		let builder = builder.http1_only(true);
 		let builder = builder.http1_keepalive(true);
 		let builder = builder.http1_max_buf_size(MAX_BUFFER_SIZE);
 		let builder = builder.http1_header_read_timeout(Duration::from_secs(10));
 		
-		Some(WebServer { builder })
+		Ok(WebServer { builder })
 	}
 	
 	pub async fn serve(self, metrics_registry: Mutex<Registry>) {

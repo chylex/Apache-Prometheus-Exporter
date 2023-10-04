@@ -1,9 +1,9 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
-use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::Mutex;
 
+use anyhow::{anyhow, Context};
 use tokio::signal;
 
 use crate::metrics::Metrics;
@@ -17,49 +17,22 @@ const ACCESS_LOG_FILE_PATTERN: &str = "ACCESS_LOG_FILE_PATTERN";
 const ERROR_LOG_FILE_PATTERN: &str = "ERROR_LOG_FILE_PATTERN";
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
+async fn main() -> anyhow::Result<()> {
 	let host = env::var("HTTP_HOST").unwrap_or(String::from("127.0.0.1"));
-	let bind_ip = match IpAddr::from_str(&host) {
-		Ok(addr) => addr,
-		Err(_) => {
-			println!("Invalid HTTP host: {}", host);
-			return ExitCode::FAILURE;
-		}
-	};
+	let bind_ip = IpAddr::from_str(&host).map_err(|_| anyhow!("Invalid HTTP host: {}", host))?;
 	
 	println!("Initializing exporter...");
 	
-	let access_log_files = match logs::find_log_files(ACCESS_LOG_FILE_PATTERN, "access log") {
-		Some(files) => files,
-		None => return ExitCode::FAILURE,
-	};
+	let access_log_files = logs::find_log_files(ACCESS_LOG_FILE_PATTERN, "access log").context("Could not find access log files")?;
+	let error_log_files = logs::find_log_files(ERROR_LOG_FILE_PATTERN, "error log").context("Could not find error log files")?;
 	
-	let error_log_files = match logs::find_log_files(ERROR_LOG_FILE_PATTERN, "error log") {
-		Some(files) => files,
-		None => return ExitCode::FAILURE,
-	};
-	
-	let server = match WebServer::try_bind(SocketAddr::new(bind_ip, 9240)) {
-		Some(server) => server,
-		None => return ExitCode::FAILURE
-	};
-	
+	let server = WebServer::try_bind(SocketAddr::new(bind_ip, 9240)).context("Could not configure web server")?;
 	let (metrics_registry, metrics) = Metrics::new();
 	
-	if !logs::start_log_watcher(access_log_files, error_log_files, metrics).await {
-		return ExitCode::FAILURE;
-	}
-	
+	logs::start_log_watcher(access_log_files, error_log_files, metrics).await.context("Could not start watching logs")?;
 	tokio::spawn(server.serve(Mutex::new(metrics_registry)));
 	
-	match signal::ctrl_c().await {
-		Ok(_) => {
-			println!("Received CTRL-C, shutting down...");
-			ExitCode::SUCCESS
-		}
-		Err(e) => {
-			println!("Error registering CTRL-C handler: {}", e);
-			ExitCode::FAILURE
-		}
-	}
+	signal::ctrl_c().await.with_context(|| "Could not register CTRL-C handler")?;
+	println!("Received CTRL-C, shutting down...");
+	Ok(())
 }

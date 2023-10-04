@@ -13,6 +13,7 @@ lto = true
 codegen-units = 1
 
 [dependencies]
+anyhow = "1.0.75"
 hyper = { version = "0.14.27", default-features = false, features = ["http1", "server", "runtime"] }
 notify = { version = "6.1.1", default-features = false, features = ["macos_kqueue"] }
 path-slash = "0.2.1"

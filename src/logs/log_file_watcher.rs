@@ -2,6 +2,7 @@ use std::cmp::max;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{anyhow, bail, Context, Result};
 use notify::{Event, EventKind};
 use notify::event::{CreateKind, ModifyKind};
 use tokio::fs::File;
@@ -50,10 +51,9 @@ impl LogWatcherConfiguration {
 		self.files.push((path, metadata));
 	}
 	
-	pub async fn start(self, metrics: &Metrics) -> bool {
+	pub async fn start(self, metrics: &Metrics) -> Result<()> {
 		if self.files.is_empty() {
-			println!("[LogWatcher] No log files provided.");
-			return false;
+			bail!("No log files provided");
 		}
 		
 		println!("[LogWatcher] Watching {} access log file(s) and {} error log file(s).", self.count_files_of_kind(LogFileKind::Access), self.count_files_of_kind(LogFileKind::Error));
@@ -73,32 +73,16 @@ impl LogWatcherConfiguration {
 			prepared_files.push(PreparedFile { path, metadata, fs_event_receiver });
 		}
 		
-		let fs_watcher = match FsWatcher::new(fs_callbacks) {
-			Ok(fs_watcher) => fs_watcher,
-			Err(e) => {
-				println!("[LogWatcher] Error creating filesystem watcher: {}", e);
-				return false;
-			}
-		};
+		let fs_watcher = FsWatcher::new(fs_callbacks).context("Could not create filesystem watcher")?;
 		
 		for file in &prepared_files {
 			let file_path = &file.path;
 			if !file_path.is_absolute() {
-				println!("[LogWatcher] Error creating filesystem watcher, path is not absolute: {}", file_path.to_string_lossy());
-				return false;
+				bail!("Path is not absolute: {}", file_path.to_string_lossy());
 			}
 			
-			let parent_path = if let Some(parent) = file_path.parent() {
-				parent
-			} else {
-				println!("[LogWatcher] Error creating filesystem watcher for parent directory of file \"{}\", parent directory does not exist", file_path.to_string_lossy());
-				return false;
-			};
-			
-			if let Err(e) = fs_watcher.watch(parent_path).await {
-				println!("[LogWatcher] Error creating filesystem watcher for directory \"{}\": {}", parent_path.to_string_lossy(), e);
-				return false;
-			}
+			let parent_path = file_path.parent().ok_or_else(|| anyhow!("Path has no parent: {}", file_path.to_string_lossy()))?;
+			fs_watcher.watch(parent_path).await.with_context(|| format!("Could not create filesystem watcher for directory: {}", parent_path.to_string_lossy()))?;
 		}
 		
 		let fs_watcher = Arc::new(fs_watcher);
@@ -108,15 +92,13 @@ impl LogWatcherConfiguration {
 			let _ = metrics.requests_total.get_or_create(&label_set);
 			let _ = metrics.errors_total.get_or_create(&label_set);
 			
-			let log_watcher = match LogWatcher::create(file.path, file.metadata, metrics.clone(), Arc::clone(&fs_watcher), file.fs_event_receiver).await {
-				Some(log_watcher) => log_watcher,
-				None => return false,
-			};
+			let log_watcher = LogWatcher::create(file.path.clone(), file.metadata, metrics.clone(), Arc::clone(&fs_watcher), file.fs_event_receiver);
+			let log_watcher = log_watcher.await.with_context(|| format!("Could not watch log file: {}", file.path.to_string_lossy()))?;
 			
 			tokio::spawn(log_watcher.watch());
 		}
 		
-		true
+		Ok(())
 	}
 }
 
@@ -127,14 +109,10 @@ struct LogWatcher {
 }
 
 impl LogWatcher {
-	async fn create(path: PathBuf, metadata: LogFileMetadata, metrics: Metrics, fs_watcher: Arc<FsWatcher>, fs_event_receiver: Receiver<Event>) -> Option<Self> {
-		let state = match LogWatchingState::initialize(path.clone(), fs_watcher).await {
-			Some(state) => state,
-			None => return None,
-		};
-		
+	async fn create(path: PathBuf, metadata: LogFileMetadata, metrics: Metrics, fs_watcher: Arc<FsWatcher>, fs_event_receiver: Receiver<Event>) -> Result<Self> {
+		let state = LogWatchingState::initialize(path.clone(), fs_watcher).await?;
 		let processor = LogLineProcessor { path, metadata, metrics };
-		Some(LogWatcher { state, processor, fs_event_receiver })
+		Ok(LogWatcher { state, processor, fs_event_receiver })
 	}
 	
 	async fn watch(mut self) {
@@ -176,8 +154,11 @@ impl LogWatcher {
 						}
 						
 						self.state = match self.state.reinitialize().await {
-							Some(state) => state,
-							None => break 'read_loop,
+							Ok(state) => state,
+							Err(e) => {
+								println!("Could not re-watch log file \"{}\": {}", path.to_string_lossy(), e);
+								break 'read_loop;
+							}
 						};
 						
 						continue 'read_loop;
@@ -222,24 +203,16 @@ struct LogWatchingState {
 impl LogWatchingState {
 	const DEFAULT_BUFFER_CAPACITY: usize = 1024 * 4;
 	
-	async fn initialize(path: PathBuf, fs_watcher: Arc<FsWatcher>) -> Option<LogWatchingState> {
-		if let Err(e) = fs_watcher.watch(&path).await {
-			println!("[LogWatcher] Error creating filesystem watcher for file \"{}\": {}", path.to_string_lossy(), e);
-			return None;
-		}
+	async fn initialize(path: PathBuf, fs_watcher: Arc<FsWatcher>) -> Result<LogWatchingState> {
+		fs_watcher.watch(&path).await.context("Could not create filesystem watcher")?;
 		
-		let lines = match File::open(&path).await {
-			Ok(file) => BufReader::with_capacity(Self::DEFAULT_BUFFER_CAPACITY, file).lines(),
-			Err(e) => {
-				println!("[LogWatcher] Error opening file \"{}\": {}", path.to_string_lossy(), e);
-				return None;
-			}
-		};
+		let file = File::open(&path).await.context("Could not open file")?;
+		let lines = BufReader::with_capacity(Self::DEFAULT_BUFFER_CAPACITY, file).lines();
 		
-		Some(LogWatchingState { path, lines, fs_watcher })
+		Ok(LogWatchingState { path, lines, fs_watcher })
 	}
 	
-	async fn reinitialize(self) -> Option<LogWatchingState> {
+	async fn reinitialize(self) -> Result<LogWatchingState> {
 		LogWatchingState::initialize(self.path, self.fs_watcher).await
 	}
 }
