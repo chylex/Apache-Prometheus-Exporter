@@ -161,6 +161,11 @@ impl LogWatcher {
 							}
 						};
 						
+						while let Ok(Some(_)) = self.state.lines.next_line().await {
+							// There are occasional spurious file creation events, so reading
+							// from the beginning would read lines that were already counted.
+						}
+						
 						continue 'read_loop;
 					}
 				}
